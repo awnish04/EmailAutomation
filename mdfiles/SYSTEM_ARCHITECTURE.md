@@ -1,0 +1,401 @@
+# System Architecture - Email Marketing Platform
+
+## High-Level Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         USER INTERFACE                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │  Dashboard   │  │  Campaigns   │  │  Hot Leads   │          │
+│  │  (Next.js)   │  │   Manager    │  │   Tracker    │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      APPLICATION LAYER                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │   Campaign   │  │     Lead     │  │    Email     │          │
+│  │   Service    │  │   Service    │  │   Service    │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      WORKER LAYER (24/7)                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │    Email     │  │   Campaign   │  │    Daily     │          │
+│  │   Monitor    │  │    Stats     │  │   Cleanup    │          │
+│  │  (5 min)     │  │  (Hourly)    │  │  (Daily)     │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                    EXTERNAL SERVICES                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │    Resend    │  │   Database   │  │    OpenAI    │          │
+│  │  (Emails)    │  │  (Postgres)  │  │   (Agent)    │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Email Flow Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 1: User Creates Campaign                                    │
+│                                                                   │
+│  User Input:                                                      │
+│  - Target audience                                                │
+│  - Industry                                                       │
+│  - Location                                                       │
+│                                                                   │
+│  ↓                                                                │
+│                                                                   │
+│  AI Agent (OpenAI):                                               │
+│  - Find leads (Apify)                                             │
+│  - Generate personalized emails                                   │
+│  - Create campaign                                                │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 2: Send Emails via Resend                                   │
+│                                                                   │
+│  For each lead:                                                   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ From: username@yourdomain.com                           │    │
+│  │ To: lead@company.com                                    │    │
+│  │ Subject: Personalized subject                           │    │
+│  │ Body: AI-generated content                              │    │
+│  │ Tracking: Enabled                                       │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                   │
+│  Status: PENDING → QUEUED → SENT                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 3: Real-time Event Tracking                                 │
+│                                                                   │
+│  Resend Webhook → /api/webhooks/resend                           │
+│                                                                   │
+│  Events:                                                          │
+│  ┌─────────────┐                                                 │
+│  │   SENT      │ → Email successfully sent                       │
+│  └─────────────┘                                                 │
+│         ↓                                                         │
+│  ┌─────────────┐                                                 │
+│  │  DELIVERED  │ → Email reached inbox                           │
+│  └─────────────┘                                                 │
+│         ↓                                                         │
+│  ┌─────────────┐                                                 │
+│  │   OPENED    │ → Lead opened email (+10 points)                │
+│  └─────────────┘                                                 │
+│         ↓                                                         │
+│  ┌─────────────┐                                                 │
+│  │   CLICKED   │ → Lead clicked link (+25 points)                │
+│  └─────────────┘                                                 │
+│         ↓                                                         │
+│  ┌─────────────┐                                                 │
+│  │   REPLIED   │ → Lead replied (+50 points)                     │
+│  └─────────────┘                                                 │
+│                                                                   │
+│  OR                                                               │
+│         ↓                                                         │
+│  ┌─────────────┐                                                 │
+│  │   BOUNCED   │ → Email failed (mark lead invalid)              │
+│  └─────────────┘                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 4: Background Processing (Every 5 minutes)                  │
+│                                                                   │
+│  Cron Job: /api/cron/email-monitor                               │
+│                                                                   │
+│  Tasks:                                                           │
+│  1. Check for new email replies                                  │
+│  2. Update campaign statistics                                   │
+│  3. Calculate engagement scores                                  │
+│  4. Identify hot leads (score > 70)                              │
+│  5. Send notifications to users                                  │
+│                                                                   │
+│  Example:                                                         │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ Lead: john@company.com                                  │    │
+│  │ - Opened email: +10 points                              │    │
+│  │ - Clicked link: +25 points                              │    │
+│  │ - Replied: +50 points                                   │    │
+│  │ Total Score: 85 → HOT LEAD 🔥                          │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 5: User Dashboard (Real-time Updates)                       │
+│                                                                   │
+│  Campaign Performance:                                            │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ Total Sent:     100                                     │    │
+│  │ Delivered:      95  (95%)                               │    │
+│  │ Opened:         45  (47%)                               │    │
+│  │ Clicked:        12  (26%)                               │    │
+│  │ Replied:        3   (3%)                                │    │
+│  │ Bounced:        5   (5%)                                │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                   │
+│  Hot Leads:                                                       │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ 🔥 john@company.com        Score: 85                    │    │
+│  │ 🔥 sarah@startup.com       Score: 75                    │    │
+│  │ 🔥 mike@business.com       Score: 72                    │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Worker System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    VERCEL CRON JOBS (24/7)                       │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Worker 1: Email Monitor (Every 5 minutes)                        │
+│                                                                   │
+│  Trigger: */5 * * * * (cron expression)                          │
+│  Endpoint: /api/cron/email-monitor                               │
+│  Timeout: 60 seconds                                             │
+│                                                                   │
+│  Tasks:                                                           │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ 1. checkEmailReplies()                                  │    │
+│  │    - Query database for new replies                     │    │
+│  │    - Process reply content                              │    │
+│  │    - Update lead status                                 │    │
+│  │    - Send notifications                                 │    │
+│  │                                                          │    │
+│  │ 2. updateCampaignStats()                                │    │
+│  │    - Calculate open rates                               │    │
+│  │    - Calculate click rates                              │    │
+│  │    - Calculate reply rates                              │    │
+│  │    - Update campaign records                            │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Worker 2: Daily Cleanup (Every day at 2 AM)                      │
+│                                                                   │
+│  Trigger: 0 2 * * * (cron expression)                            │
+│  Endpoint: /api/cron/daily-cleanup                               │
+│  Timeout: 300 seconds (5 minutes)                                │
+│                                                                   │
+│  Tasks:                                                           │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ 1. cleanOldData()                                       │    │
+│  │    - Delete emails older than 30 days                   │    │
+│  │    - Archive completed campaigns                        │    │
+│  │    - Remove temporary data                              │    │
+│  │    - Optimize database                                  │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Database Schema
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         DATABASE MODELS                          │
+└─────────────────────────────────────────────────────────────────┘
+
+User
+├── id
+├── email
+├── subdomainEmail (username@yourdomain.com)
+├── subdomainUsername
+└── campaigns[]
+
+Campaign
+├── id
+├── name
+├── status (DRAFT, ACTIVE, COMPLETED)
+├── stats (JSON: open rate, click rate, etc.)
+├── totalSent
+├── totalOpened
+├── totalClicked
+├── totalReplied
+├── emails[]
+└── leads[]
+
+Lead
+├── id
+├── email
+├── firstName
+├── lastName
+├── company
+├── engagementScore (0-100)
+├── leadStatus (COLD, WARM, HOT)
+├── lastEngagedAt
+└── emails[]
+
+Email
+├── id
+├── campaignId
+├── leadId
+├── subject
+├── body
+├── status (PENDING, SENT, DELIVERED, OPENED, CLICKED, REPLIED, BOUNCED)
+├── events (JSON array of all events)
+├── lastEventAt
+├── openCount
+├── clickCount
+└── replies[]
+
+EmailReply
+├── id
+├── emailId
+├── leadId
+├── fromEmail
+├── subject
+├── body
+├── sentiment
+├── interestLevel
+└── processedAt
+```
+
+## Security Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      SECURITY LAYERS                             │
+└─────────────────────────────────────────────────────────────────┘
+
+1. Authentication (Clerk)
+   ├── User sign-up/sign-in
+   ├── Session management
+   └── Protected routes
+
+2. API Security
+   ├── Webhook signature verification
+   ├── Cron job secret authentication
+   └── Rate limiting
+
+3. Data Security
+   ├── Environment variables (secrets)
+   ├── Database encryption (Neon)
+   └── HTTPS only
+
+4. Email Security
+   ├── SPF records
+   ├── DKIM signing
+   └── DMARC policy
+```
+
+## Scalability
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SCALING STRATEGY                              │
+└─────────────────────────────────────────────────────────────────┘
+
+Current Capacity:
+├── Emails: 50,000/month (Resend Pro)
+├── Database: 10 GB (Neon Pro)
+├── Cron Jobs: Unlimited (Vercel Pro)
+└── API Requests: Unlimited (Vercel Pro)
+
+Scaling Options:
+├── Add Redis for caching
+├── Implement queue system (BullMQ)
+├── Use database read replicas
+├── Add CDN for static assets
+└── Implement rate limiting per user
+```
+
+## Monitoring & Observability
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      MONITORING STACK                            │
+└─────────────────────────────────────────────────────────────────┘
+
+1. Application Logs
+   ├── Vercel Logs (real-time)
+   ├── Error tracking
+   └── Performance metrics
+
+2. Database Monitoring
+   ├── Query performance
+   ├── Connection pool
+   └── Storage usage
+
+3. Email Metrics
+   ├── Delivery rate
+   ├── Bounce rate
+   ├── Engagement rate
+   └── Reply rate
+
+4. Alerts
+   ├── High bounce rate (> 5%)
+   ├── Low delivery rate (< 95%)
+   ├── Cron job failures
+   └── API errors
+```
+
+## Cost Breakdown
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    MONTHLY COSTS                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+For 10,000 emails/month:
+
+Resend (Email Service)
+├── Free tier: 3,000 emails
+├── Pro tier: $20 for 50,000 emails
+└── Estimated: $20/month
+
+Vercel (Hosting + Cron)
+├── Hobby: Free (limited)
+├── Pro: $20/month (recommended)
+└── Estimated: $20/month
+
+Neon (Database)
+├── Free tier: 0.5 GB
+├── Pro tier: $19 for 10 GB
+└── Estimated: $19/month
+
+OpenAI (AI Agent)
+├── GPT-4: $0.03 per 1K tokens
+├── Estimated usage: 1M tokens/month
+└── Estimated: $30/month
+
+Total: ~$89/month for 10,000 emails
+```
+
+## Future Enhancements
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ROADMAP                                       │
+└─────────────────────────────────────────────────────────────────┘
+
+Phase 1 (Current): ✅
+├── Email sending
+├── Real-time tracking
+├── Background workers
+└── Basic analytics
+
+Phase 2 (Next):
+├── A/B testing
+├── Email templates
+├── Advanced analytics
+└── Team collaboration
+
+Phase 3 (Future):
+├── SMS integration
+├── WhatsApp integration
+├── CRM integration
+└── Mobile app
+```
+
+---
+
+**Last Updated:** May 18, 2026
+**Version:** 1.0.0

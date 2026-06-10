@@ -1,0 +1,283 @@
+// Autonity — Email Marketing Automation SaaS
+// Prisma schema for Neon PostgreSQL
+
+
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+}
+
+enum ContactStatus {
+  ACTIVE
+  UNSUBSCRIBED
+  BOUNCED
+  COMPLAINED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  CANCELLED
+}
+
+enum AutomationStatus {
+  ACTIVE
+  PAUSED
+  DRAFT
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum EmailEventType {
+  SENT
+  OPENED
+  CLICKED
+  BOUNCED
+  COMPLAINED
+  UNSUBSCRIBED
+}
+
+// ─── Models ─────────────────────────────────────────────────────────────────
+
+model User {
+  id                    String    @id @default(cuid())
+  clerkId               String    @unique
+  email                 String    @unique
+  name                  String?
+  plan                  Plan      @default(FREE)
+  stripeCustomerId      String?
+  stripeSubscriptionId  String?
+  emailsSentThisMonth   Int       @default(0)
+  monthlyResetAt        DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  contacts              Contact[]
+  lists                 List[]
+  segments              Segment[]
+  emailTemplates        EmailTemplate[]
+  campaigns             Campaign[]
+  automations           Automation[]
+  emailEvents           EmailEvent[]
+  apiKeys               ApiKey[]
+  agents                Agent[]
+}
+
+model Contact {
+  id             String        @id @default(cuid())
+  userId         String
+  email          String
+  firstName      String?
+  lastName       String?
+  status         ContactStatus @default(ACTIVE)
+  tags           String[]
+  metadata       Json?
+  enrichmentData Json?
+  leadScore      Int           @default(0)
+  source         String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user                   User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contactLists           ContactList[]
+  campaignContacts       CampaignContact[]
+  automationEnrollments  AutomationEnrollment[]
+  emailEvents            EmailEvent[]
+
+  @@unique([userId, email])
+  @@index([userId, status])
+  @@index([userId, createdAt])
+}
+
+model List {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contacts    ContactList[]
+  campaigns   Campaign[]
+}
+
+model ContactList {
+  contactId String
+  listId    String
+  addedAt   DateTime @default(now())
+
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  list      List    @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, listId])
+}
+
+model Segment {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  filters   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+}
+
+model Agent {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model EmailTemplate {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  subject     String
+  htmlContent String
+  textContent String?
+  variables   String[]
+  abTestId    String?
+  version     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Campaign {
+  id                String         @id @default(cuid())
+  userId            String
+  name              String
+  subject           String
+  htmlContent       String
+  fromName          String
+  fromEmail         String
+  status            CampaignStatus @default(DRAFT)
+  listId            String?
+  segmentId         String?
+  scheduledAt       DateTime?
+  sentAt            DateTime?
+  totalSent         Int            @default(0)
+  totalOpened       Int            @default(0)
+  totalClicked      Int            @default(0)
+  totalBounced      Int            @default(0)
+  totalUnsubscribed Int            @default(0)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  list             List?             @relation(fields: [listId], references: [id], onDelete: SetNull)
+  segment          Segment?          @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  campaignContacts CampaignContact[]
+  emailEvents      EmailEvent[]
+}
+
+model CampaignContact {
+  id           String    @id @default(cuid())
+  campaignId   String
+  contactId    String
+  sent         Boolean   @default(false)
+  opened       Boolean   @default(false)
+  clicked      Boolean   @default(false)
+  bounced      Boolean   @default(false)
+  unsubscribed Boolean   @default(false)
+  sentAt       DateTime?
+  openedAt     DateTime?
+  clickedAt    DateTime?
+  messageId    String?
+
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact      Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([contactId])
+}
+
+model Automation {
+  id             String           @id @default(cuid())
+  userId         String
+  name           String
+  trigger        Json
+  steps          Json
+  status         AutomationStatus @default(DRAFT)
+  totalEnrolled  Int              @default(0)
+  totalCompleted Int              @default(0)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enrollments AutomationEnrollment[]
+  emailEvents EmailEvent[]
+}
+
+model AutomationEnrollment {
+  id            String           @id @default(cuid())
+  automationId  String
+  contactId     String
+  currentStepId String
+  status        EnrollmentStatus @default(ACTIVE)
+  enrolledAt    DateTime         @default(now())
+  completedAt   DateTime?
+  stepHistory   Json
+
+  automation    Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  contact       Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+}
+
+model EmailEvent {
+  id           String         @id @default(cuid())
+  userId       String
+  type         EmailEventType
+  contactId    String
+  campaignId   String?
+  automationId String?
+  metadata     Json?
+  messageId    String?
+  occurredAt   DateTime       @default(now())
+
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contact      Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  campaign     Campaign?   @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  automation   Automation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, type, occurredAt])
+}
+
+model ApiKey {
+  id        String    @id @default(cuid())
+  userId    String
+  name      String
+  key       String    @unique
+  lastUsed  DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
